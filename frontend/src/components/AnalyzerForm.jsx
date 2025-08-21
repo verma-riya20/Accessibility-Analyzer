@@ -61,7 +61,7 @@ const AnalyzerForm = ({ onAnalyze, loading, disabled }) => {
 
     try {
       // Make a single request that includes AI suggestions
-      const response = await fetch('http://localhost:3001/api/analysis/analyze', {
+      const response = await fetch('https://accessibility-analyzer-3.onrender.com/api/analysis/analyze', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
