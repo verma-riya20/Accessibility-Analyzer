@@ -65,9 +65,9 @@ const corsOptions = {
 app.use(cors(corsOptions));
 
 // Middleware
-app.use(cors(
-  { origin: 'https://accessibility-analyzer-eight.vercel.app/' }
-));
+//app.use(cors(
+//  { origin: 'https://accessibility-analyzer-eight.vercel.app/' }
+//));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
