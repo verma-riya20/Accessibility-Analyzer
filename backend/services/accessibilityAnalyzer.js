@@ -111,16 +111,20 @@ class AccessibilityAnalyzer {
     let browser;
     try {
       // Launch Puppeteer browser with enhanced options
-      browser = await puppeteer.launch({
-        headless: true,
-        args: [
-          '--no-sandbox', 
-          '--disable-setuid-sandbox',
-          '--disable-web-security',
-          '--disable-dev-shm-usage',
-          '--disable-features=VizDisplayCompositor'
-        ]
-      });
+      const browser = await puppeteer.launch({
+    headless: true,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-accelerated-2d-canvas',
+      '--no-first-run',
+      '--no-zygote',
+      '--single-process',
+      '--disable-gpu'
+    ],
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+  });
       
       const page = await browser.newPage();
       
