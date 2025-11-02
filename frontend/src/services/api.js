@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Create axios instance with base configuration
 const api = axios.create({
-  baseURL: 'https://accessibility-analyzer-2.onrender.com',
+  baseURL: 'https://accessibility-analyzer-2.onrender.com/api',
   timeout: 60000, // 30 seconds timeout for analysis
   headers: {
     'Content-Type': 'application/json',
