@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Create axios instance with base configuration
 const api = axios.create({
-  baseURL: 'https://accessibility-analyzer-3.onrender.com/api',
+  baseURL: 'http://localhost:3001/api',
   timeout: 60000, // 30 seconds timeout for analysis
   headers: {
     'Content-Type': 'application/json',
@@ -45,9 +45,9 @@ api.interceptors.response.use(
 );
 
 // API functions
-export const analyzeUrl = async (url) => {
+export const analyzeUrl = async (url, includeAI = true) => {
   try {
-    const response = await api.post('/analysis/analyze', { url });
+    const response = await api.post('/analysis/analyze', { url, includeAI });
     return response.data;
   } catch (error) {
     console.error('Analysis API error:', error);

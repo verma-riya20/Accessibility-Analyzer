@@ -7,94 +7,90 @@ const ImageContentCheckerService = require('../services/contentChecker');
 
 router.post('/analyze', async (req, res) => {
   try {
-    const { url, includeAI = true, includeHeatmap = false, includeImageAnalysis = false } = req.body;
+    const { url, includeAI } = req.body;
+    console.log('🔍 Analysis request:', { url, includeAI });
     
     if (!url) {
       return res.status(400).json({
-        error: 'URL is required'
+        success: false,
+        message: 'URL is required'
       });
     }
 
-    // Validate URL format
+    // Validate and format URL
     let validUrl;
     try {
-      validUrl = new URL(url);
-      if (!['http:', 'https:'].includes(validUrl.protocol)) {
-        throw new Error('Invalid protocol');
-      }
+      validUrl = url.startsWith('http') ? url : `https://${url}`;
+      new URL(validUrl);
     } catch (error) {
       return res.status(400).json({
-        error: 'Invalid URL format. Please include http:// or https://'
+        success: false,
+        message: 'Invalid URL format'
       });
     }
 
-    console.log(`Starting analysis for: ${url}`);
+    console.log('🚀 Starting analysis for:', validUrl);
     
     const analyzer = new AccessibilityAnalyzer();
-    const results = await analyzer.analyzeUrl(url);
-
-    // Add AI suggestions if requested
-    if (includeAI) {
-      console.log('Generating AI suggestions...');
-      try {
-        const aiService = new AISuggestionsService(); // Initialize the service
-        const aiSuggestions = await aiService.generateSuggestions(results); // Use 'results' not 'analysisResults'
-        results.aiSuggestions = aiSuggestions; // Add to 'results' not 'analysisResults'
-      } catch (error) {
-        console.error('AI suggestions failed:', error);
-        results.aiSuggestions = {
-          ai_suggestions: [],
-          success: false,
-          error: error.message
-        };
-      }
-    }
-
-    // Add heatmap data if requested
-    if (includeHeatmap) {
-      console.log('Generating accessibility heatmap...');
-      results.heatmapData = { message: 'Heatmap generation requires page context' };
-    }
-
-    // Add image analysis if requested
-    if (includeImageAnalysis) {
-      console.log('Analyzing image content...');
-      results.imageAnalysis = { message: 'Image analysis requires page context' };
-    }
-
-    res.json({
-      success: true,
-      url,
-      timestamp: new Date().toISOString(),
-      features: {
-        aiSuggestions: includeAI,
-        heatmap: includeHeatmap,
-        imageAnalysis: includeImageAnalysis
-      },
-      ...results
+    const analysisResult = await analyzer.analyzeUrl(validUrl);
+    
+    console.log('✅ Analysis completed successfully:', {
+      issues: analysisResult.issues?.length || 0,
+      score: analysisResult.summary?.score || 0
     });
 
-  } catch (error) {
-    console.error('Enhanced analysis error:', error);
-    
-    let errorMessage = 'Failed to analyze webpage';
-    if (error.message.includes('net::ERR_NAME_NOT_RESOLVED')) {
-      errorMessage = 'Website not found. Please check the URL.';
-    } else if (error.message.includes('net::ERR_CONNECTION_REFUSED')) {
-      errorMessage = 'Connection refused. The website may be down.';
-    } else if (error.message.includes('Expected')) {
-      errorMessage = 'Unable to parse the webpage content. The site may have formatting issues.';
-    } else if (error.message.includes('Navigation timeout')) {
-      errorMessage = 'The website took too long to load. Please try again or check if the site is accessible.';
+    // Add AI suggestions if requested
+    if (includeAI && analysisResult.issues && analysisResult.issues.length > 0) {
+      console.log('🤖 Generating AI suggestions...');
+      try {
+        const aiService = new AISuggestionsService();
+        const aiResults = await aiService.generateSuggestions(analysisResult);
+        
+        analysisResult.aiSuggestions = aiResults.ai_suggestions || [];
+        analysisResult.aiSuccess = aiResults.success;
+        console.log('✅ AI suggestions added:', analysisResult.aiSuggestions.length);
+      } catch (aiError) {
+        console.error('⚠️ AI suggestions failed:', aiError.message);
+        analysisResult.aiSuggestions = [];
+        analysisResult.aiError = aiError.message;
+      }
+    } else if (includeAI) {
+      console.log('ℹ️ No issues found for AI analysis');
+      analysisResult.aiSuggestions = [];
     }
-    
+
+    // Ensure we return a properly structured response
+    const response = {
+      success: true,
+      url: validUrl,
+      summary: analysisResult.summary || { totalIssues: 0, score: 0 },
+      issues: analysisResult.issues || [],
+      pageInfo: analysisResult.pageInfo || { title: 'Unknown', url: validUrl },
+      checks: analysisResult.checks || {},
+      disabilityAnalysis: analysisResult.disabilityAnalysis || {},
+      aiSuggestions: analysisResult.aiSuggestions || [],
+      aiSuccess: analysisResult.aiSuccess || false,
+      timestamp: new Date().toISOString()
+    };
+
+    console.log('📤 Sending response:', {
+      hasIssues: response.issues.length > 0,
+      hasAiSuggestions: response.aiSuggestions.length > 0,
+      score: response.summary.score
+    });
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('💥 Analysis error:', error);
     res.status(500).json({
-      error: errorMessage,
-      details: error.message
+      success: false,
+      message: 'Failed to analyze webpage',
+      error: error.message,
+      details: error.stack ? error.stack.split('\n').slice(0, 5).join('\n') : 'No details available'
     });
   }
 });
-
 // Dedicated AI suggestions endpoint
 router.post('/ai-suggestions', async (req, res) => {
   try {
@@ -363,5 +359,6 @@ router.get('/wcag-info', (req, res) => {
     }
   });
 });
+
 
 module.exports = router;

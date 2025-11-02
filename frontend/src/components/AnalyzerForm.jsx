@@ -39,7 +39,7 @@ const AnalyzerForm = ({ onAnalyze, loading, disabled }) => {
     if (errors.url) setErrors({});
   };
 
- const getAISuggestions = async () => {
+const getAISuggestions = async () => {
   setAiLoading(true);
   setAiError('');
   setAiSuggestions(null);
@@ -53,72 +53,68 @@ const AnalyzerForm = ({ onAnalyze, loading, disabled }) => {
       return;
     }
 
-    console.log('Getting AI suggestions for URL:', url);
+    console.log('🔍 Getting AI suggestions for URL:', url);
 
-    // Create an AbortController for the timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000); // 60-second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 90000); // 35 seconds
 
     try {
-      // Make a single request that includes AI suggestions
-      const response = await fetch('https://accessibility-analyzer-3.onrender.com/api/analysis/analyze', {
+      const response = await fetch('http://localhost:3001/api/analysis/analyze', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           url: url.trim(),
-          includeAI: true  // Tell the server to include AI suggestions
+          includeAI: true
         }),
-        signal: controller.signal  // Add the abort signal
+        signal: controller.signal
       });
 
-      clearTimeout(timeoutId); // Clear the timeout if request completes
+      clearTimeout(timeoutId);
 
-      const responseText = await response.text();
-      
+      console.log('📡 Response status:', response.status);
+
       if (!response.ok) {
-        let errorMessage = 'Failed to analyze website';
-        try {
-          const errorData = JSON.parse(responseText);
-          errorMessage = errorData.error || errorMessage;
-        } catch (e) {
-          errorMessage = responseText || errorMessage;
-        }
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.message || errorData.error || `HTTP ${response.status}`;
         throw new Error(errorMessage);
       }
 
-      let data;
-      try {
-        data = JSON.parse(responseText);
-        console.log('Received data with AI:', data);
-      } catch (e) {
-        console.error('Failed to parse response:', e);
-        throw new Error('Invalid data received');
-      }
-      
-      // Check for AI suggestions in the response structure
-      if (data.aiSuggestions && data.aiSuggestions.ai_suggestions) {
-        setAiSuggestions(data.aiSuggestions.ai_suggestions);
-      } else if (data.aiSuggestions && data.aiSuggestions.suggestions) {
-        setAiSuggestions(data.aiSuggestions.suggestions);
-      } else if (data.ai_suggestions) {
-        setAiSuggestions(data.ai_suggestions);
+      const data = await response.json();
+      console.log('✅ Received analysis data:', {
+        success: data.success,
+        hasIssues: data.issues?.length > 0,
+        hasAiSuggestions: data.aiSuggestions?.length > 0,
+        aiSuggestionsCount: data.aiSuggestions?.length || 0
+      });
+
+      if (data.success && data.aiSuggestions && Array.isArray(data.aiSuggestions)) {
+        if (data.aiSuggestions.length > 0) {
+          console.log('✅ Setting AI suggestions:', data.aiSuggestions);
+          setAiSuggestions(data.aiSuggestions);
+        } else {
+          console.log('ℹ️ No AI suggestions returned');
+          setAiSuggestions([]);
+          setAiError('Analysis completed but no accessibility issues were found that require AI suggestions.');
+        }
       } else {
-        setAiSuggestions([]);
-        setAiError('No AI suggestions found in the response');
+        console.error('❌ Invalid response format:', data);
+        setAiError('Invalid response from server. Please try again.');
       }
+
     } catch (fetchError) {
       if (fetchError.name === 'AbortError') {
-        throw new Error('Request timed out. The analysis is taking too long - try a simpler website.');
+        throw new Error('Request timed out after 35 seconds. Please try a simpler website.');
       }
       throw fetchError;
     } finally {
       clearTimeout(timeoutId);
     }
+
   } catch (error) {
-    console.error('AI Suggestion Error:', error);
-    setAiError(error.message || 'Could not fetch suggestions. Please try again.');
+    console.error('❌ AI Suggestion Error:', error);
+    setAiError(error.message || 'Could not fetch AI suggestions. Please try again.');
   } finally {
     setAiLoading(false);
   }

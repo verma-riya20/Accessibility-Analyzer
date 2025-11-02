@@ -1,454 +1,318 @@
-const { GoogleGenAI } = require('@google/genai');
+// ...existing code...
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const axios = require("axios");
 
 class AISuggestionsService {
   constructor() {
-    // Initialize Gemini AI with new SDK
     this.geminiApiKey = process.env.GEMINI_API_KEY;
-    
+    this.modelName = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+
     if (this.geminiApiKey) {
-      this.genAI = new GoogleGenAI(this.geminiApiKey);
-      this.modelName = "gemini-2.5-flash";
-      console.log(`🤖 Gemini AI Service initialized with ${this.modelName} ✅`);
+      try {
+        this.genAI = new GoogleGenerativeAI(this.geminiApiKey);
+        console.log(`🤖 Gemini AI Service initialized with ${this.modelName} ✅`);
+      } catch (e) {
+        console.warn("⚠️ Gemini SDK init failed, SDK disabled:", e.message || e);
+        this.genAI = null;
+      }
     } else {
-      console.log('⚠️ No Gemini API key found');
+      console.log("⚠️ No Gemini API key found");
+      this.genAI = null;
     }
-    
-    console.log('API Key available:', this.geminiApiKey ? 'Yes ✅' : 'No ❌');
+
+    console.log("API Key available:", this.geminiApiKey ? "Yes ✅" : "No ❌");
+  }
+
+  // REST fallback
+  async restGenerateText(prompt, timeoutMs = 9000) {
+    if (!this.geminiApiKey) throw new Error("GEMINI_API_KEY missing");
+    const model = this.modelName || "text-bison-001";
+    const url = `https://generativelanguage.googleapis.com/v1beta2/models/${model}:generateText?key=${this.geminiApiKey}`;
+    const body = {
+      prompt: { text: prompt },
+      temperature: 0.2,
+      candidateCount: 1,
+      maxOutputTokens: 300,
+    };
+
+    const resp = await axios.post(url, body, { timeout: timeoutMs });
+    const data = resp?.data || {};
+    const candidate = data.candidates?.[0] || data.candidate || null;
+    if (candidate) return String(candidate.output || candidate.content || candidate.text || "").trim();
+    if (typeof data.output === "string") return data.output;
+    throw new Error("No candidate returned from generative API");
+  }
+
+  async getGeminiSuggestion(issue) {
+    const prompt = this.buildGeminiPrompt(issue);
+
+    if (this.genAI) {
+      try {
+        const model = this.genAI.getGenerativeModel({ model: this.modelName });
+        const res = await model.generateContent(prompt);
+        const response = await res.response;
+        const text = (response.text() || "").replace(/[*`]/g, "").trim();
+
+        return {
+          issue_type: issue.rule || issue.type || "Accessibility Issue",
+          issue_message: issue.message || "",
+          ai_suggestion: text,
+          priority: this.getPriority(issue.rule || issue.type),
+          estimated_fix_time: this.getEstimatedTime(issue.rule || issue.type),
+        };
+      } catch (err) {
+        console.warn("Gemini SDK error, falling back to REST/fallback:", err?.message || err);
+        if (this.geminiApiKey) {
+          try {
+            const text = await this.restGenerateText(prompt, 9000);
+            return {
+              issue_type: issue.rule || issue.type || "Accessibility Issue",
+              issue_message: issue.message || "",
+              ai_suggestion: (text || "").replace(/[*`]/g, "").trim(),
+              priority: this.getPriority(issue.rule || issue.type),
+              estimated_fix_time: this.getEstimatedTime(issue.rule || issue.type),
+            };
+          } catch (restErr) {
+            console.warn("REST fallback failed:", restErr?.message || restErr);
+          }
+        }
+        return this.getFallbackSuggestion(issue);
+      }
+    }
+
+    // No SDK available -> try REST if key present
+    if (this.geminiApiKey) {
+      try {
+        const text = await this.restGenerateText(prompt, 9000);
+        return {
+          issue_type: issue.rule || issue.type || "Accessibility Issue",
+          issue_message: issue.message || "",
+          ai_suggestion: (text || "").replace(/[*`]/g, "").trim(),
+          priority: this.getPriority(issue.rule || issue.type),
+          estimated_fix_time: this.getEstimatedTime(issue.rule || issue.type),
+        };
+      } catch (err) {
+        console.warn("REST generation failed:", err?.message || err);
+        return this.getFallbackSuggestion(issue);
+      }
+    }
+
+    return this.getFallbackSuggestion(issue);
+  }
+
+  buildGeminiPrompt(issue) {
+    return `
+Accessibility Issue: ${issue.rule || issue.type || "Unknown"}
+Description: ${issue.message || "No description provided"}
+Context: ${issue.context || issue.html || "N/A"}
+
+Provide:
+1) One-sentence explanation of why this matters
+2) Three concrete, numbered steps to fix it
+3) A small, plain code example (no markdown)
+
+Return plain text only.
+`.trim();
+  }
+
+  getFallbackSuggestion(issue) {
+    const type = (issue.rule || issue.type || "").toLowerCase();
+    if (type.includes("alt")) {
+      return {
+        issue_type: issue.rule || "missingAltText",
+        issue_message: issue.message || "Image missing alt text",
+        ai_suggestion: 'Add descriptive alt text, e.g. <img src="..." alt="Description">',
+        priority: "high",
+        estimated_fix_time: "5-15 minutes",
+        is_fallback: true,
+      };
+    }
+    if (type.includes("label")) {
+      return {
+        issue_type: issue.rule || "missingLabel",
+        issue_message: issue.message || "Form control missing label",
+        ai_suggestion: 'Add a label element: <label for="name">Name</label><input id="name" />',
+        priority: "high",
+        estimated_fix_time: "2-10 minutes",
+        is_fallback: true,
+      };
+    }
+    if (type.includes("link")) {
+      return {
+        issue_type: issue.rule || "emptyLinkText",
+        issue_message: issue.message || "Link missing accessible text",
+        ai_suggestion: 'Provide descriptive link text or aria-label attributes.',
+        priority: "medium",
+        estimated_fix_time: "5-20 minutes",
+        is_fallback: true,
+      };
+    }
+    return {
+      issue_type: issue.rule || issue.type || "accessibility",
+      issue_message: issue.message || "Accessibility issue detected",
+      ai_suggestion: "Refer to WCAG guidance for the rule and apply semantic HTML and ARIA correctly.",
+      priority: "medium",
+      estimated_fix_time: "10-30 minutes",
+      is_fallback: true,
+    };
+  }
+
+  getPriority(t) {
+    if (!t) return "medium";
+    const s = (t || "").toLowerCase();
+    if (s.includes("alt") || s.includes("label") || s.includes("keyboard") || s.includes("missing")) return "high";
+    if (s.includes("contrast") || s.includes("heading")) return "high";
+    return "medium";
+  }
+
+  getEstimatedTime(t) {
+    if (!t) return "10-30 minutes";
+    const s = (t || "").toLowerCase();
+    if (s.includes("alt")) return "5-15 minutes";
+    if (s.includes("label")) return "2-10 minutes";
+    if (s.includes("contrast")) return "15-45 minutes";
+    return "10-30 minutes";
+  }
+
+  extractAllIssues(results) {
+    const issues = [];
+    try {
+      if (results.checks && typeof results.checks === "object") {
+        Object.values(results.checks).forEach((c) => {
+          if (Array.isArray(c?.issues)) issues.push(...c.issues);
+        });
+      }
+      if (results.disabilityAnalysis && typeof results.disabilityAnalysis === "object") {
+        Object.values(results.disabilityAnalysis).forEach((d) => {
+          if (Array.isArray(d?.issues)) issues.push(...d.issues);
+        });
+      }
+      if (Array.isArray(results.violations)) {
+        results.violations.forEach((v) => {
+          issues.push({
+            rule: v.id,
+            type: v.id,
+            message: v.description,
+            context: v.nodes?.[0]?.html || "",
+            impact: v.impact,
+          });
+        });
+      }
+      const weight = { critical: 0, serious: 1, moderate: 2, minor: 3 };
+      issues.sort((a, b) => (weight[a.impact] ?? 99) - (weight[b.impact] ?? 99));
+    } catch (e) {
+      console.warn("extractAllIssues error:", e?.message || e);
+    }
+    return issues;
   }
 
   async generateSuggestions(analysisResults) {
-    console.log('🔄 Starting AI suggestions generation...');
-    
-    if (!this.geminiApiKey) {
-      console.log('❌ No Gemini API key - returning empty results');
-      return {
-        ai_suggestions: [],
-        success: false,
-        error: 'No Gemini API key provided'
-      };
+    console.log("🔄 Starting AI suggestions generation...");
+    if (!analysisResults) {
+      return { ai_suggestions: [], success: false, error: "Analysis results are required" };
     }
 
     try {
       const allIssues = this.extractAllIssues(analysisResults);
       console.log(`📋 Found ${allIssues.length} issues to process`);
-      
-      if (allIssues.length === 0) {
-        return {
-          ai_suggestions: [],
-          success: true,
-          message: 'No issues found to process'
-        };
-      }
+      if (allIssues.length === 0) return { ai_suggestions: [], success: true, message: "No issues found" };
 
-      // Process top issues with Gemini AI
-      const topIssues = allIssues.slice(0, 5);
+      const topIssues = allIssues.slice(0, 6);
       const aiSuggestions = [];
 
       for (let i = 0; i < topIssues.length; i++) {
         const issue = topIssues[i];
-        console.log(`🔍 Processing issue ${i + 1}: ${issue.rule || issue.type}`);
-        
+        console.log(`🔍 Processing issue ${i + 1}:`, issue.rule || issue.type);
         try {
           const suggestion = await this.getGeminiSuggestion(issue);
-          if (suggestion) {
-            aiSuggestions.push(suggestion);
-            console.log(`✅ Got Gemini suggestion for: ${issue.rule || issue.type}`);
-          }
-        } catch (error) {
-          console.error(`❌ Gemini failed for ${issue.rule || issue.type}:`, error.message);
-          // Add fallback suggestion
+          aiSuggestions.push(suggestion);
+        } catch (e) {
+          console.warn("AI suggestion generation error for issue:", e?.message || e);
           aiSuggestions.push(this.getFallbackSuggestion(issue));
         }
-        
-        // Small delay between requests
-        if (i < topIssues.length - 1) {
-          await new Promise(resolve => setTimeout(resolve, 500));
+        await new Promise((r) => setTimeout(r, 400));
+      }
+
+      const unique = [];
+      const seen = new Set();
+      for (let idx = 0; idx < aiSuggestions.length; idx++) {
+        const s = aiSuggestions[idx] || {};
+        let key = (s.issue_type || s.issue_message || s.ai_suggestion || "").toString().toLowerCase().slice(0, 60).trim();
+        if (!key) key = `__idx_${idx}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          unique.push(s);
         }
       }
 
-      // Remove duplicate suggestions based on issue_type
-      const uniqueSuggestions = [];
-      const seenTypes = new Set();
-      
-      for (const suggestion of aiSuggestions) {
-        const key = suggestion.issue_type?.toLowerCase();
-        if (key && !seenTypes.has(key)) {
-          seenTypes.add(key);
-          uniqueSuggestions.push(suggestion);
-        }
-      }
-
-      // Add an overall summary suggestion if we have multiple issues
-      if (uniqueSuggestions.length > 1) {
+      if (unique.length > 1) {
         try {
-          const overallSuggestion = await this.generateOverallSuggestion(analysisResults, uniqueSuggestions);
-          uniqueSuggestions.unshift(overallSuggestion); // Add to the beginning
-        } catch (error) {
-          console.error('Failed to generate overall suggestion:', error);
+          const overall = await this.generateOverallSuggestion?.(analysisResults, unique).catch(() => null);
+          if (overall) unique.unshift(overall);
+        } catch (e) {
+          console.warn("Overall suggestion generation failed:", e?.message || e);
         }
       }
+
+      console.log("✅ AI suggestions generated (unique):", unique.length);
 
       return {
-        ai_suggestions: uniqueSuggestions,
+        ai_suggestions: unique,
+        aiSuggestions: unique,
         success: true,
         total_processed: topIssues.length,
-        suggestions_generated: uniqueSuggestions.length,
-        ai_provider: 'gemini',
-        model_used: this.modelName
+        suggestions_generated: unique.length,
+        ai_provider: this.genAI ? "gemini-sdk" : "gemini-rest",
+        model_used: this.modelName,
       };
-
     } catch (error) {
-      console.error('❌ Error in generateSuggestions:', error);
+      console.error("❌ Error in generateSuggestions:", error);
       return {
         ai_suggestions: [],
+        aiSuggestions: [],
         success: false,
-        error: error.message
+        error: error?.message || String(error),
       };
     }
   }
 
+  // Optional overall suggestion generator (keeps simple fallback if not implemented)
   async generateOverallSuggestion(analysisResults, existingSuggestions) {
     try {
-      const issueTypes = existingSuggestions
-        .map(s => s.issue_type)
-        .filter(Boolean)
-        .join(', ');
-
-      let totalIssues = 0;
-      let criticalIssues = 0;
-      
-      // Try to extract meaningful numbers from the analysis
-      if (analysisResults.summary) {
-        totalIssues = analysisResults.summary.total || 0;
-        criticalIssues = analysisResults.summary.critical || 0;
-      } else if (analysisResults.violations) {
-        totalIssues = analysisResults.violations.length;
-        criticalIssues = analysisResults.violations.filter(v => v.impact === 'critical').length;
+      let score = 0;
+      if (analysisResults && analysisResults.summary) {
+        const s = analysisResults.summary;
+        score = (s.overallScore ?? s.overall) || 0;
       } else {
-        // Count from existing suggestions
-        totalIssues = existingSuggestions.length;
-        criticalIssues = existingSuggestions.filter(s => s.priority === 'high').length;
+        score = 0;
       }
-      
-      // Calculate accessibility score
-      const allIssues = this.extractAllIssues(analysisResults);
-      const scoreData = this.calculateAccessibilityScore(analysisResults, allIssues);
-      
-      const prompt = `
-You are an accessibility expert reviewing a website. Here are the key findings:
 
-WEBSITE ANALYSIS:
-- Accessibility Score: ${scoreData.score}/100 (${scoreData.grade})
-- Total accessibility issues found: ${totalIssues}
-- Critical/high priority issues: ${criticalIssues}
-- Issue types detected: ${issueTypes}
+      const total = (analysisResults && analysisResults.summary && (analysisResults.summary.totalIssues)) ||
+                    (analysisResults && Array.isArray(analysisResults.issues) && analysisResults.issues.length) ||
+                    existingSuggestions.length || 0;
 
-Please provide a comprehensive accessibility assessment with the following structure:
-
-Start with a summary mentioning the ${scoreData.score}/100 score and ${scoreData.grade} rating.
-Then provide 4 specific, actionable recommendations to improve this website's accessibility.
-
-Write in clear, professional language.
-Do not use markdown formatting or asterisks.
-Number your recommendations clearly as 1., 2., 3., 4.
-Focus on strategic improvements that will have the biggest impact.
-`;
-
-      const model = this.genAI.getGenerativeModel({ model: this.modelName });
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      let text = response.text().replace(/\*\*/g, '').trim();
-      
-      // Clean up the response to ensure proper formatting
-      text = text
-        .replace(/```/g, '')
-        .replace(/\*\*/g, '')
-        .replace(/^\s*Assessment:|^\s*Summary:/gmi, '')
-        .trim();
-      
-      console.log('📝 Overall suggestion generated:', text.substring(0, 200) + '...');
-      
+      const types = existingSuggestions.map(s => s.issue_type).filter(Boolean).slice(0,6).join(', ') || 'accessibility issues';
+      const text = `Accessibility Score: ${score}. Total issues: ${total}. Key areas: ${types}. Recommendations: 1) Fix high priority issues first. 2) Add alt text and labels. 3) Improve color contrast. 4) Integrate automated checks (axe-core) into CI.`;
       return {
         issue_type: "Overall Accessibility Assessment",
+        issue_message: "",
         ai_suggestion: text,
         priority: "high",
-        estimated_fix_time: "Varies based on complexity",
-        is_overall: true
+        estimated_fix_time: "Varies",
+        is_overall: true,
       };
-    } catch (error) {
-      console.error('Failed to generate overall suggestion:', error);
-      
-      // Enhanced fallback with actual data
-      const totalIssues = existingSuggestions.length;
-      const criticalIssues = existingSuggestions.filter(s => s.priority === 'high').length;
-      
-      // Calculate score for fallback too
-      const allIssues = this.extractAllIssues(analysisResults);
-      const scoreData = this.calculateAccessibilityScore(analysisResults, allIssues);
-      
+    } catch (e) {
       return {
         issue_type: "Overall Accessibility Assessment",
-        ai_suggestion: `
-Accessibility Score: ${scoreData.score}/100 (${scoreData.grade}) - This website has ${totalIssues} accessibility issues, with ${criticalIssues} requiring immediate attention.
-
-1. Address critical accessibility barriers first, particularly missing alt text and form labels, as these prevent users with disabilities from accessing essential content.
-
-2. Implement automated accessibility testing in your development workflow using tools like axe-core to catch issues before they reach production.
-
-3. Establish accessibility guidelines for your team, including WCAG 2.1 AA compliance standards, and provide training on accessible design and development practices.
-
-4. Conduct regular accessibility audits and user testing with people who use assistive technologies to ensure real-world usability and identify issues that automated tools might miss.
-
-Improving accessibility is an ongoing process that benefits all users and ensures legal compliance with accessibility regulations.`,
+        issue_message: "",
+        ai_suggestion: "Review top issues and prioritize fixes (alt text, labels, contrast).",
         priority: "high",
-        estimated_fix_time: "Ongoing process",
-        is_overall: true
+        estimated_fix_time: "Varies",
+        is_overall: true,
       };
     }
-  }
-
-  async getGeminiSuggestion(issue) {
-    try {
-      console.log(`🤖 Asking Gemini AI about: ${issue.rule || issue.type}`);
-      
-      const prompt = this.buildGeminiPrompt(issue);
-      console.log(`📝 Prompt: ${prompt.substring(0, 100)}...`);
-      
-      // Use the correct API format with the genAI object
-      const model = this.genAI.getGenerativeModel({ model: this.modelName });
-      const result = await model.generateContent(prompt);
-      const response = await result.response;
-      const text = response.text();
-      
-      console.log(`📥 Gemini response: ${text.substring(0, 100)}...`);
-      
-      // Process the response to ensure proper formatting
-      const cleanedResponse = text
-        .replace(/^\s*Problem:|^\s*Issue:|^\s*Solution:/gmi, '') // Remove unnecessary headers
-        .replace(/\*\*/g, '')  // Remove markdown bold
-        .replace(/```/g, '')   // Remove code block markers
-        .trim();
-      
-      return {
-        issue_type: issue.rule || issue.type || 'Accessibility Issue',
-        issue_message: issue.message,
-        ai_suggestion: cleanedResponse,
-        priority: this.getPriority(issue.rule || issue.type),
-        estimated_fix_time: this.getEstimatedTime(issue.rule || issue.type)
-      };
-      
-    } catch (error) {
-      console.error(`🚨 Gemini API Error:`, error.message);
-      return this.getFallbackSuggestion(issue);
-    }
-  }
-
-  buildGeminiPrompt(issue) {
-    const basePrompt = `
-Analyze the following accessibility issue and provide a clear, structured solution:
-
-ISSUE TYPE: ${issue.rule || issue.type || 'Unknown Issue'}
-ISSUE MESSAGE: ${issue.message || 'No message provided'}
-ISSUE CONTEXT: ${issue.context || issue.html || 'No context provided'}
-
-Please provide:
-1. A clear explanation of why this is an accessibility problem (1 sentence)
-2. A step-by-step solution with 3 specific steps
-3. A code example showing the fix
-
-Format your response as follows:
-- Start with a concise explanation of the accessibility barrier
-- Number each step clearly (1., 2., 3.)
-- Make each step actionable and specific
-- Provide clean code examples without markdown formatting
-
-Do not use asterisks (**) or other markdown formatting.
-Avoid phrases like "Based on the issue provided" or repeating the issue details.
-Be direct, clear, and focused on practical solutions.
-`;
-
-    return basePrompt;
-  }
-
-  getFallbackSuggestion(issue) {
-    const issueType = issue.rule || issue.type || 'Accessibility Issue';
-    let fallbackText = '';
-    
-    // Provide fallback suggestions based on common issue types
-    switch ((issueType || '').toLowerCase()) {
-      case 'emptyalttext':
-      case 'missingalttext':
-      case 'alt':
-        fallbackText = `
-Images with empty alt text create accessibility barriers. 
-
-1. Add descriptive alt text to explain the image's purpose and content.
-2. Keep descriptions concise (under 125 characters) and focus on the information conveyed.
-3. Example: <img src="chart.png" alt="Bar chart showing quarterly sales growth of 15%">`;
-        break;
-        
-      case 'missinglabel':
-      case 'label':
-        fallbackText = `
-Form fields without labels are not accessible to screen reader users.
-
-1. Add a proper label element associated with the input field.
-2. Use the 'for' attribute to match the input's 'id'.
-3. Example: <label for="name">Full Name</label><input id="name" type="text">`;
-        break;
-        
-      case 'lowcontrast':
-      case 'contrast':
-        fallbackText = `
-Low contrast text is difficult to read for users with visual impairments.
-
-1. Increase the contrast ratio between text and background to at least 4.5:1.
-2. Use darker text colors on light backgrounds or lighter text on dark backgrounds.
-3. Use a contrast checker tool to verify your color combinations meet WCAG standards.`;
-        break;
-        
-      default:
-        fallbackText = `
-This accessibility issue needs to be addressed to ensure all users can access your content.
-
-1. Review the specific error message and location in your code.
-2. Consult the WCAG guidelines for the specific requirement.
-3. Test your fix with assistive technologies to ensure it resolves the issue.`;
-    }
-    
-    return {
-      issue_type: issueType,
-      issue_message: issue.message || `Accessibility issue detected`,
-      ai_suggestion: fallbackText,
-      priority: this.getPriority(issueType),
-      estimated_fix_time: this.getEstimatedTime(issueType),
-      is_fallback: true
-    };
-  }
-
-  getPriority(issueType) {
-    if (!issueType) return 'medium';
-    
-    const highPriority = ['missingalttext', 'emptyalttext', 'missinglabel', 'lowcontrast', 'aria', 'heading'];
-    const normalizedType = (issueType || '').toLowerCase();
-    
-    for (const priority of highPriority) {
-      if (normalizedType.includes(priority)) {
-        return 'high';
-      }
-    }
-    
-    return 'medium';
-  }
-
-  getEstimatedTime(issueType) {
-    if (!issueType) return '10-15 minutes';
-    
-    const normalizedType = (issueType || '').toLowerCase();
-    const timeMap = {
-      'missingalttext': '5-10 minutes',
-      'emptyalttext': '3-7 minutes',
-      'missinglabel': '2-5 minutes',
-      'lowcontrast': '15-30 minutes',
-      'keyboardinaccessible': '20-45 minutes',
-      'missingheadingstructure': '30-60 minutes',
-      'aria': '10-20 minutes',
-      'landmark': '15-25 minutes'
-    };
-    
-    // Check for partial matches
-    for (const [key, time] of Object.entries(timeMap)) {
-      if (normalizedType.includes(key)) {
-        return time;
-      }
-    }
-    
-    return '10-15 minutes';
-  }
-
-  calculateAccessibilityScore(analysisResults, totalIssues) {
-    let score = 100;
-    
-    // Deduct points based on issues
-    const criticalIssues = totalIssues.filter(issue => 
-      issue.impact === 'critical' || this.getPriority(issue.rule || issue.type) === 'high'
-    ).length;
-    
-    const seriousIssues = totalIssues.filter(issue => 
-      issue.impact === 'serious'
-    ).length;
-    
-    const moderateIssues = totalIssues.filter(issue => 
-      issue.impact === 'moderate'
-    ).length;
-    
-    // Scoring system
-    score -= criticalIssues * 15;  // -15 points per critical issue
-    score -= seriousIssues * 10;   // -10 points per serious issue
-    score -= moderateIssues * 5;   // -5 points per moderate issue
-    
-    score = Math.max(0, score); // Don't go below 0
-    
-    let grade = 'Excellent';
-    if (score < 60) grade = 'Poor';
-    else if (score < 75) grade = 'Fair';
-    else if (score < 90) grade = 'Good';
-    
-    return { score, grade };
-  }
-
-  extractAllIssues(results) {
-    const issues = [];
-    
-    try {
-      // Extract from accessibility checks
-      if (results.checks && typeof results.checks === 'object') {
-        Object.values(results.checks).forEach(check => {
-          if (check && check.issues && Array.isArray(check.issues)) {
-            issues.push(...check.issues);
-          }
-        });
-      }
-
-      // Extract from disability analysis
-      if (results.disabilityAnalysis && typeof results.disabilityAnalysis === 'object') {
-        Object.values(results.disabilityAnalysis).forEach(analysis => {
-          if (analysis && analysis.issues && Array.isArray(analysis.issues)) {
-            issues.push(...analysis.issues);
-          }
-        });
-      }
-      
-      // Extract from raw violations
-      if (results.violations && Array.isArray(results.violations)) {
-        results.violations.forEach(violation => {
-          issues.push({
-            rule: violation.id,
-            type: violation.id,
-            message: violation.description,
-            context: violation.nodes?.[0]?.html || '',
-            impact: violation.impact
-          });
-        });
-      }
-
-      console.log(`📊 Extracted ${issues.length} issues from analysis results`);
-      
-      // Sort issues by priority/impact
-      issues.sort((a, b) => {
-        const impactOrder = { critical: 0, serious: 1, moderate: 2, minor: 3 };
-        const aImpact = a.impact || 'moderate';
-        const bImpact = b.impact || 'moderate';
-        
-        return (impactOrder[aImpact] || 99) - (impactOrder[bImpact] || 99);
-      });
-      
-    } catch (error) {
-      console.error('Error extracting issues:', error);
-    }
-
-    return issues;
   }
 }
 
 module.exports = AISuggestionsService;
+// ...existing code...
