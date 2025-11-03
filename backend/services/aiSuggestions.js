@@ -1,6 +1,8 @@
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require("axios");
+//new
+const AI_ENABLED = false; // ⛔ turn OFF AI suggestions
 
 class AISuggestionsService {
   constructor() {
@@ -224,8 +226,20 @@ Return plain text only.
         const issue = topIssues[i];
         console.log(`🔍 Processing issue ${i + 1}:`, issue.rule || issue.type);
         try {
-          const suggestion = await this.getGeminiSuggestion(issue);
-          aiSuggestions.push(suggestion);
+          //chnage
+          let suggestion;
+
+if (AI_ENABLED) {
+  suggestion = await this.getGeminiSuggestion(issue);
+} else {
+  console.log("⚠️ AI disabled — using fallback suggestions only");
+  suggestion = this.getFallbackSuggestion(issue);
+}
+
+aiSuggestions.push(suggestion);
+
+          //const suggestion = await this.getGeminiSuggestion(issue);
+         // aiSuggestions.push(suggestion);
         } catch (e) {
           console.warn("AI suggestion generation error for issue:", e?.message || e);
           aiSuggestions.push(this.getFallbackSuggestion(issue));

@@ -23,7 +23,7 @@ app.use(cors({
   origin: [
     'http://localhost:3000',
     'http://localhost:5173',
-    'https://accessibility-analyzer-eight.vercel.app'
+    'https://accessibility-analyzer-sigma.vercel.app'
   ],
   credentials: false,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],

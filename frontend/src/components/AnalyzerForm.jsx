@@ -59,7 +59,7 @@ const getAISuggestions = async () => {
     const timeoutId = setTimeout(() => controller.abort(), 90000); // 35 seconds
 
     try {
-      const response = await fetch('http://localhost:3001/api/analysis/analyze', {
+      const response = await fetch('https://accessibility-analyzer-2.onrender.com/api/analysis/analyze', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

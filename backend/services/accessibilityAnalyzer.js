@@ -137,12 +137,12 @@ class AccessibilityAnalyzer {
       await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)');
 
       // navigation with retries and alternative waitUntil options to avoid "Navigating frame was detached"
-      let navSuccess = false;
+     let navSuccess = false;
       const maxAttempts = 3;
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
           const waitUntilOpt = attempt === 1 ? 'domcontentloaded' : 'load';
-          await page.goto(url, { waitUntil: waitUntilOpt, timeout: 20000 });
+          await page.goto(url, { waitUntil: ["load", "domcontentloaded"], timeout: 90000 });
           await safeWait(1200);
           navSuccess = true;
           break;
