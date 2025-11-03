@@ -1,4 +1,4 @@
-// ...existing code...
+
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require("axios");
 
