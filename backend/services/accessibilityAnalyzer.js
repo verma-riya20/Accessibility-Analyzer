@@ -138,41 +138,41 @@ class AccessibilityAnalyzer {
 
       // navigation with retries and alternative waitUntil options to avoid "Navigating frame was detached"
      let navSuccess = false;
-const maxAttempts = 3;
-
-for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-  try {
-    if (!browser || !browser.isConnected?.()) {
-      browser = await puppeteer.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH
-      });
-    }
-
-    page = await browser.newPage();
-    await page.setUserAgent(
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-    );
-
-    await page.goto(url, {
-      waitUntil: ["networkidle2", "domcontentloaded", "load"],
-      timeout: 25000
-    });
-
-    await new Promise(r => setTimeout(r, 800));
-    navSuccess = true;
-    break;
-
-  } catch (err) {
-    console.warn(`Attempt ${attempt} failed:`, err.message);
-
-    try { await page?.close(); } catch {}
-    try { await browser?.close(); } catch {}
-
-    await new Promise(r => setTimeout(r, 600)); // backoff
-  }
-}
+      const maxAttempts = 3;
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const waitUntilOpt = attempt === 1 ? 'domcontentloaded' : 'load';
+          await page.goto(url, { waitUntil: ["load", "domcontentloaded", "networkidle2"], timeout: 45000 });
+          await safeWait(1200);
+          navSuccess = true;
+          break;
+        } catch (navErr) {
+          console.warn(`Navigation attempt ${attempt} failed:`, navErr.message || navErr);
+          // try to recover: close page and create a fresh one for next attempt
+          try { if (page) await page.close().catch(()=>{}); } catch(e){}
+          try {
+            // if browser disconnected, re-launch
+            if (!browser || (typeof browser.isConnected === 'function' && !browser.isConnected())) {
+              try { await browser.close().catch(()=>{}); } catch(e){}
+              browser = await puppeteer.launch({
+                headless: true,
+                args: ['--no-sandbox','--disable-setuid-sandbox'],
+                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
+              });
+            }
+          } catch (relaunchErr) {
+            console.warn('Browser relaunch failed:', relaunchErr.message || relaunchErr);
+          }
+          try {
+            page = await browser.newPage();
+            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)');
+          } catch (createErr) {
+            console.warn('Failed to create new page for retry:', createErr.message || createErr);
+          }
+          // backoff before next attempt
+          await new Promise(r => setTimeout(r, 800));
+        }
+      }
 
       if (!navSuccess) {
         throw new Error('Failed to load webpage: Navigating frame was detached or navigation repeatedly failed');
