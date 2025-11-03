@@ -142,7 +142,7 @@ class AccessibilityAnalyzer {
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         try {
           const waitUntilOpt = attempt === 1 ? 'domcontentloaded' : 'load';
-          await page.goto(url, { waitUntil: ["load", "domcontentloaded", "networkidle2"], timeout: 45000 });
+          await page.goto(url, { waitUntil: ["load", "domcontentloaded"], timeout: 90000 });
           await safeWait(1200);
           navSuccess = true;
           break;
