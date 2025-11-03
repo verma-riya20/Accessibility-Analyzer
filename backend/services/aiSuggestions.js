@@ -2,7 +2,7 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require("axios");
 //new
-const AI_ENABLED = true; // ⛔ turn OFF AI suggestions
+const AI_ENABLED = false; // ⛔ turn OFF AI suggestions
 
 class AISuggestionsService {
   constructor() {
