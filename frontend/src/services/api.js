@@ -57,7 +57,7 @@ export const analyzeUrl = async (url, includeAI = true) => {
 
 export const getAnalysisHistory = async () => {
   try {
-    const response = await api.get('/analysis/history');
+    const response = await api.get('/analysis/history', { timeout: 180000 });   // 3 minutes
     return response.data;
   } catch (error) {
     console.error('History API error:', error);

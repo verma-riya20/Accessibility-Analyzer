@@ -1,5 +1,7 @@
-const puppeteer = require('puppeteer');
-const cheerio = require('cheerio');
+// Playwright version
+const { chromium } = require("playwright");
+const cheerio = require("cheerio");
+
 
 class AccessibilityAnalyzer {
   constructor() {
@@ -101,201 +103,84 @@ class AccessibilityAnalyzer {
   }
 
   async analyzeUrl(url) {
-    let browser = null;
-    let page = null;
+  let browser, page;
 
-    // small helper: safe wait (fallback if page.waitForTimeout not available)
-    const safeWait = async (ms) => {
-      if (page && typeof page.waitForTimeout === 'function') {
-        await page.waitForTimeout(ms);
-      } else {
-        await new Promise(r => setTimeout(r, ms));
+  const safeWait = async (ms) => {
+    await new Promise(r => setTimeout(r, ms));
+  };
+
+  try {
+    browser = await chromium.launch({
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+
+    page = await browser.newPage({
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome Safari",
+      viewport: { width: 1366, height: 768 }
+    });
+
+    let navSuccess = false;
+    const maxAttempts = 3;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await page.goto(url, { waitUntil: "domcontentloaded", timeout: 120000 });
+        await safeWait(1500);
+        navSuccess = true;
+        break;
+      } catch (err) {
+        console.log(`Retry #${attempt} navigation failed`, err.message);
+        await safeWait(800);
       }
+    }
+
+    if (!navSuccess) throw new Error("Failed to load page after retries");
+
+    // Remove scripts before extracting HTML
+    await page.evaluate(() => {
+      document.querySelectorAll("script, style").forEach((e) => e.remove());
+    });
+
+    let content = await page.content();
+    const $ = cheerio.load(content);
+
+    let pageTitle = await page.title().catch(() => $("title").text() || "No title");
+
+    const results = {
+      summary: {},
+      issues: [],
+      pageInfo: {
+        title: pageTitle,
+        url,
+        hasLang: !!$("html[lang]").length,
+        hasViewport: !!$('meta[name="viewport"]').length
+      },
+      checks: {}
     };
 
-    try {
-      // Launch Puppeteer browser with robust options
-      browser = await puppeteer.launch({
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
-          '--no-zygote',
-          '--single-process',
-          '--disable-gpu'
-        ],
-        executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
-      });
+    // Run your checks (unchanged)
+    results.checks.images = this.checkImages($);
+    results.checks.headings = this.checkHeadings($);
+    results.checks.forms = this.checkForms($);
+    results.checks.links = this.checkLinks($);
+    results.checks.colors = await this.checkColors(page);
+    results.checks.keyboard = await this.checkKeyboardAccess(page);
+    results.checks.aria = this.checkAria($);
+    results.checks.semantic = this.checkSemanticStructure($);
+    results.disabilityAnalysis = await this.analyzeDisabilityImpacts($, page);
 
-      // create page
-      page = await browser.newPage();
+    this.calculateSummary(results);
+    return results;
 
-      // set user agent to reduce bot blocking
-      await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)');
-
-      // navigation with retries and alternative waitUntil options to avoid "Navigating frame was detached"
-     let navSuccess = false;
-      const maxAttempts = 3;
-      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        try {
-          const waitUntilOpt = attempt === 1 ? 'domcontentloaded' : 'load';
-          await page.goto(url, { waitUntil: ["load", "domcontentloaded"], timeout: 90000 });
-          await safeWait(1200);
-          navSuccess = true;
-          break;
-        } catch (navErr) {
-          console.warn(`Navigation attempt ${attempt} failed:`, navErr.message || navErr);
-          // try to recover: close page and create a fresh one for next attempt
-          try { if (page) await page.close().catch(()=>{}); } catch(e){}
-          try {
-            // if browser disconnected, re-launch
-            if (!browser || (typeof browser.isConnected === 'function' && !browser.isConnected())) {
-              try { await browser.close().catch(()=>{}); } catch(e){}
-              browser = await puppeteer.launch({
-                headless: true,
-                args: ['--no-sandbox','--disable-setuid-sandbox'],
-                executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined
-              });
-            }
-          } catch (relaunchErr) {
-            console.warn('Browser relaunch failed:', relaunchErr.message || relaunchErr);
-          }
-          try {
-            page = await browser.newPage();
-            await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)');
-          } catch (createErr) {
-            console.warn('Failed to create new page for retry:', createErr.message || createErr);
-          }
-          // backoff before next attempt
-          await new Promise(r => setTimeout(r, 800));
-        }
-      }
-
-      if (!navSuccess) {
-        throw new Error('Failed to load webpage: Navigating frame was detached or navigation repeatedly failed');
-      }
-
-      // remove scripts and inline problematic styles and get HTML snapshot
-      let content;
-      try {
-        content = await page.evaluate(() => {
-          try {
-            document.querySelectorAll('script').forEach(s => s.remove());
-          } catch (e) { /* ignore */ }
-          try {
-            document.querySelectorAll('style').forEach(s => {
-              // simple heuristic to remove potentially problematic style blocks
-              if (!s.textContent || s.textContent.length > 50000) s.remove();
-            });
-          } catch (e) { /* ignore */ }
-          return document.documentElement.outerHTML;
-        });
-      } catch (evalErr) {
-        throw new Error(`Failed to get page content: ${evalErr.message || evalErr}`);
-      }
-
-      // parse with cheerio with fallback cleaning
-      let $;
-      try {
-        $ = cheerio.load(content, {
-          xmlMode: false,
-          decodeEntities: true,
-          lowerCaseAttributeNames: false,
-          recognizeSelfClosing: true,
-          ignoreWhitespace: true,
-          normalizeWhitespace: true
-        });
-      } catch (parseErr) {
-        try {
-          const cleanContent = content
-            .replace(/style\s*=\s*"[^"]*"/gi, '')
-            .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-            .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-            .replace(/<!--[\s\S]*?-->/g, '');
-          $ = cheerio.load(cleanContent, {
-            xmlMode: false,
-            decodeEntities: true,
-            lowerCaseAttributeNames: false,
-            recognizeSelfClosing: true,
-            ignoreWhitespace: true,
-            normalizeWhitespace: true
-          });
-        } catch (secondParseErr) {
-          throw new Error(`Unable to parse webpage content: ${secondParseErr.message || secondParseErr}`);
-        }
-      }
-
-      // page title: try Puppeteer API then fallback to cheerio
-      let pageTitle = 'No title found';
-      try {
-        pageTitle = await page.title();
-        if (!pageTitle) pageTitle = $('title').text() || 'No title found';
-      } catch (tErr) {
-        try { pageTitle = $('title').text() || 'No title found'; } catch(e) {}
-      }
-
-      // results skeleton
-      const results = {
-        summary: {
-          totalIssues: 0,
-          criticalIssues: 0,
-          warningIssues: 0,
-          passedChecks: 0,
-          wcagLevel: 'AA',
-          overallScore: 100
-        },
-        issues: [],
-        pageInfo: {
-          title: pageTitle,
-          url: url,
-          hasTitle: !!pageTitle && pageTitle !== 'No title found',
-          hasLang: false,
-          hasViewport: false
-        },
-        checks: {}
-      };
-
-      try { results.pageInfo.hasLang = !!$('html[lang]').length; } catch(e){ console.warn('Error checking lang:', e.message); }
-      try { results.pageInfo.hasViewport = !!$('meta[name="viewport"]').length; } catch(e){ console.warn('Error checking viewport:', e.message); }
-
-      // run checks (each has local try/catch to avoid breaking the overall analysis)
-      try { results.checks.images = this.checkImages($); } catch (e) { console.warn('Image check failed:', e.message); results.checks.images = { issues: [], totalImages: 0, passed: 0 }; }
-      try { results.checks.headings = this.checkHeadings($); } catch (e) { console.warn('Heading check failed:', e.message); results.checks.headings = { issues: [], totalHeadings: 0, hasH1: false }; }
-      try { results.checks.forms = this.checkForms($); } catch (e) { console.warn('Form check failed:', e.message); results.checks.forms = { issues: [], totalInputs: 0, passed: 0 }; }
-      try { results.checks.links = this.checkLinks($); } catch (e) { console.warn('Link check failed:', e.message); results.checks.links = { issues: [], totalLinks: 0, passed: 0 }; }
-      try { results.checks.colors = await this.checkColors(page); } catch (e) { console.warn('Color check failed:', e.message); results.checks.colors = { issues: [], checked: false }; }
-      try { results.checks.keyboard = await this.checkKeyboardAccess(page); } catch (e) { console.warn('Keyboard check failed:', e.message); results.checks.keyboard = { issues: [], checked: false }; }
-      try { results.checks.aria = this.checkAria($); } catch (e) { console.warn('ARIA check failed:', e.message); results.checks.aria = { issues: [], checked: false }; }
-      try { results.checks.semantic = this.checkSemanticStructure($); } catch (e) { console.warn('Semantic check failed:', e.message); results.checks.semantic = { issues: [], hasMain: false, hasNav: false, hasHeader: false, hasFooter: false }; }
-
-      try {
-        results.disabilityAnalysis = await this.analyzeDisabilityImpacts($, page);
-      } catch (e) {
-        console.warn('Disability impact analysis failed:', e.message);
-        results.disabilityAnalysis = this.getEmptyDisabilityAnalysis();
-      }
-
-      // calculate and attach summary
-      this.calculateSummary(results);
-
-      return results;
-
-    } catch (error) {
-      console.error('Analysis error:', error);
-      throw new Error(`Failed to analyze URL: ${error.message || error}`);
-    } finally {
-      // ensure resources closed
-      try {
-        if (page) await page.close().catch(()=>{});
-      } catch (e) { /* ignore */ }
-      try {
-        if (browser) await browser.close().catch(()=>{});
-      } catch (e) { /* ignore */ }
-    }
+  } catch (err) {
+    throw new Error("Playwright analysis failed: " + err.message);
+  } finally {
+    try { if (page) await page.close(); } catch {}
+    try { if (browser) await browser.close(); } catch {}
   }
+}
+
 
   async analyzeDisabilityImpacts($, page) {
     const analysis = {
