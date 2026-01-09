@@ -4,6 +4,9 @@ import Header from './components/Header';
 import AnalyzerForm from './components/AnalyzerForm';
 import ResultsDisplay from './components/ResultsDisplay';
 import LoadingSpinner from './components/LoadingSpinner';
+import About from './components/About';
+import Guidelines from './components/Guidelines';
+import Help from './components/Help';
 import { analyzeUrl } from './services/api';
 
 function App() {
@@ -54,6 +57,7 @@ function App() {
                     onAnalyze={handleAnalyze} 
                     loading={loading}
                     disabled={loading}
+                     analysisResults={results} // ✅ pass scan results here
                   />
                 </div>
 
@@ -84,6 +88,9 @@ function App() {
                 )}
               </div>
             } />
+            <Route path="/about" element={<About />} />
+            <Route path="/guidelines" element={<Guidelines />} />
+            <Route path="/help" element={<Help />} />
           </Routes>
         </main>
 
