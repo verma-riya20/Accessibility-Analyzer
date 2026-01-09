@@ -105,6 +105,11 @@ class ImageContentCheckerService {
       analysis.color_contrast = this.checkColorContrast();
       analysis.semantic_html = this.checkSemanticHTML();
 
+      console.log('Keyboard Navigation Score:', analysis.keyboard_navigation);
+      console.log('Color Contrast Score:', analysis.color_contrast);
+      console.log('Semantic HTML Score:', analysis.semantic_html);
+      console.log('Final Accessibility Score:', analysis.accessibility_score);
+
       return analysis;
     } catch (error) {
       console.error('Error analyzing images:', error);
