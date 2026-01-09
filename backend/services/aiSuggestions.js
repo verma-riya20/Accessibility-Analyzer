@@ -1,8 +1,7 @@
-
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const axios = require("axios");
 //new
-const AI_ENABLED = true; // ⛔ turn OFF AI suggestions
+const AI_ENABLED = true; // ⛔ enable AI suggestions
 
 class AISuggestionsService {
   constructor() {
@@ -108,10 +107,16 @@ Accessibility Issue: ${issue.rule || issue.type || "Unknown"}
 Description: ${issue.message || "No description provided"}
 Context: ${issue.context || issue.html || "N/A"}
 
+Why it matters:
+Accessibility issues impact user experience and inclusivity, especially for users with disabilities.
+
 Provide:
 1) One-sentence explanation of why this matters
 2) Three concrete, numbered steps to fix it
 3) A small, plain code example (no markdown)
+
+Example Context:
+${issue.html || "<div>Example HTML context</div>"}
 
 Return plain text only.
 `.trim();
@@ -149,11 +154,12 @@ Return plain text only.
         is_fallback: true,
       };
     }
+    // Expanded fallback logic for other issue types
     return {
-      issue_type: issue.rule || issue.type || "accessibility",
-      issue_message: issue.message || "Accessibility issue detected",
-      ai_suggestion: "Refer to WCAG guidance for the rule and apply semantic HTML and ARIA correctly.",
-      priority: "medium",
+      issue_type: issue.rule || "generalAccessibilityIssue",
+      issue_message: issue.message || "General accessibility issue detected",
+      ai_suggestion: 'Review the issue and apply best practices for accessibility.',
+      priority: "low",
       estimated_fix_time: "10-30 minutes",
       is_fallback: true,
     };
@@ -329,4 +335,3 @@ aiSuggestions.push(suggestion);
 }
 
 module.exports = AISuggestionsService;
-// ...existing code...

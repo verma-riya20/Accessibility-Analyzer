@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-const AnalyzerForm = ({ onAnalyze, loading, disabled }) => {
+const AnalyzerForm = ({ onAnalyze, loading, disabled, analysisResults }) => {
   const [url, setUrl] = useState('');
   const [errors, setErrors] = useState({});
   const [aiSuggestions, setAiSuggestions] = useState(null);
@@ -39,6 +39,8 @@ const AnalyzerForm = ({ onAnalyze, loading, disabled }) => {
     if (errors.url) setErrors({});
   };
 
+// ...everything above remains exactly the same
+
 const getAISuggestions = async () => {
   setAiLoading(true);
   setAiError('');
@@ -53,27 +55,30 @@ const getAISuggestions = async () => {
       return;
     }
 
+    // ✅ check scan results exist
+    if (!analysisResults?.issues?.length) {
+      setAiError('Run accessibility scan first — no issues detected yet.');
+      setAiLoading(false);
+      return;
+    }
+
     console.log('🔍 Getting AI suggestions for URL:', url);
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 90000); // 35 seconds
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
 
     try {
-      const response = await fetch('https://accessibility-analyzer-2.onrender.com/api/analysis/analyze', {
+      const response = await fetch('https://accessibility-analyzer-2.onrender.com/api/analysis/ai-suggestions', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           url: url.trim(),
-          includeAI: true
+          issues: analysisResults.issues   // ✅ send issues
         }),
         signal: controller.signal
       });
 
       clearTimeout(timeoutId);
-
-      console.log('📡 Response status:', response.status);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -82,25 +87,13 @@ const getAISuggestions = async () => {
       }
 
       const data = await response.json();
-      console.log('✅ Received analysis data:', {
-        success: data.success,
-        hasIssues: data.issues?.length > 0,
-        hasAiSuggestions: data.aiSuggestions?.length > 0,
-        aiSuggestionsCount: data.aiSuggestions?.length || 0
-      });
+      console.log('✅ AI Response:', data);
 
-      if (data.success && data.aiSuggestions && Array.isArray(data.aiSuggestions)) {
-        if (data.aiSuggestions.length > 0) {
-          console.log('✅ Setting AI suggestions:', data.aiSuggestions);
-          setAiSuggestions(data.aiSuggestions);
-        } else {
-          console.log('ℹ️ No AI suggestions returned');
-          setAiSuggestions([]);
-          setAiError('Analysis completed but no accessibility issues were found that require AI suggestions.');
-        }
+      if (data.success && Array.isArray(data.aiSuggestions)) {
+        setAiSuggestions(data.aiSuggestions);
       } else {
-        console.error('❌ Invalid response format:', data);
-        setAiError('Invalid response from server. Please try again.');
+        setAiSuggestions([]);
+        setAiError('No AI suggestions available.');
       }
 
     } catch (fetchError) {
@@ -119,6 +112,11 @@ const getAISuggestions = async () => {
     setAiLoading(false);
   }
 };
+
+
+
+// ...rest of component stays EXACTLY the same
+
   const sampleUrls = [
     'https://www.w3.org/',
     'https://webaim.org/',
@@ -190,7 +188,8 @@ const getAISuggestions = async () => {
             )}
           </button>
 
-          <button
+          
+<button
             type="button"
             onClick={getAISuggestions}
             disabled={disabled || !url.trim() || aiLoading}
@@ -213,7 +212,6 @@ const getAISuggestions = async () => {
               'Get AI Suggestions'
             )}
           </button>
-
           {url && !loading && (
             <button
               type="button"
