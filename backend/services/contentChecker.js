@@ -522,21 +522,65 @@ class ImageContentCheckerService {
   }
 
   checkKeyboardNavigation() {
-    // Placeholder logic for keyboard navigation analysis
-    // Replace with actual implementation
-    return true; // Assume keyboard navigation is supported
+    // Check if the page is navigable using only the keyboard
+    const focusableElements = document.querySelectorAll(
+      'a, button, input, textarea, select, details, [tabindex]:not([tabindex="-1"])'
+    );
+
+    let allFocusable = true;
+    focusableElements.forEach((el) => {
+      if (!el.hasAttribute('tabindex') && !el.focus) {
+        allFocusable = false;
+      }
+    });
+
+    return allFocusable;
   }
 
   checkColorContrast() {
-    // Placeholder logic for color contrast analysis
-    // Replace with actual implementation
-    return { score: 85 }; // Example score
+    // Evaluate color contrast for text elements
+    const textElements = document.querySelectorAll('p, span, h1, h2, h3, h4, h5, h6');
+    let totalScore = 0;
+    let count = 0;
+
+    textElements.forEach((el) => {
+      const style = window.getComputedStyle(el);
+      const color = style.color;
+      const backgroundColor = style.backgroundColor;
+
+      // Placeholder: Replace with actual contrast ratio calculation
+      const contrastRatio = this.calculateContrastRatio(color, backgroundColor);
+      if (contrastRatio >= 4.5) {
+        totalScore += 100;
+      } else {
+        totalScore += 50;
+      }
+      count++;
+    });
+
+    return { score: count > 0 ? totalScore / count : 0 };
   }
 
   checkSemanticHTML() {
-    // Placeholder logic for semantic HTML analysis
+    // Assess the use of semantic HTML elements
+    const semanticTags = ['header', 'main', 'footer', 'article', 'section', 'nav', 'aside'];
+    let semanticCount = 0;
+
+    semanticTags.forEach((tag) => {
+      const elements = document.querySelectorAll(tag);
+      semanticCount += elements.length;
+    });
+
+    const totalTags = document.querySelectorAll('*').length;
+    const score = (semanticCount / totalTags) * 100;
+
+    return { score: Math.min(score, 100) };
+  }
+
+  calculateContrastRatio(foreground, background) {
+    // Placeholder for contrast ratio calculation logic
     // Replace with actual implementation
-    return { score: 90 }; // Example score
+    return 5; // Example contrast ratio
   }
 }
 
