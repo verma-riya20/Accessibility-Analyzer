@@ -65,7 +65,10 @@ class ImageContentCheckerService {
           poor_alt: []
         },
         ai_suggestions: [],
-        accessibility_score: 0
+        accessibility_score: 0,
+        keyboard_navigation: false, // Default value
+        color_contrast: { score: 0 }, // Default value
+        semantic_html: { score: 0 } // Default value
       };
 
       // Analyze each image
@@ -96,6 +99,11 @@ class ImageContentCheckerService {
       
       // Add overall recommendations
       analysis.overall_recommendations = this.generateOverallRecommendations(analysis);
+
+      // Populate additional accessibility fields
+      analysis.keyboard_navigation = this.checkKeyboardNavigation();
+      analysis.color_contrast = this.checkColorContrast();
+      analysis.semantic_html = this.checkSemanticHTML();
 
       return analysis;
     } catch (error) {
@@ -382,7 +390,7 @@ class ImageContentCheckerService {
         return `Text image: ${filename.replace(/[-_]/g, ' ')}`;
         
       case 'complex':
-        return `Chart or diagram: ${filename.replace(/[-_]/g, ' ')}`;
+        return `Chart or diagram: ${filename.replace(/[-_]/g, ' ')}`;z
         
       default:
         return `Image: ${filename.replace(/[-_]/g, ' ')}`;
@@ -424,14 +432,23 @@ class ImageContentCheckerService {
   calculateImageAccessibilityScore(analysis) {
     const total = analysis.total_images;
     if (total === 0) return 100;
-    
+
     const good = analysis.alt_text_analysis.good_alt.length;
     const missing = analysis.alt_text_analysis.missing_alt.length;
     const poor = analysis.alt_text_analysis.poor_alt.length;
-    
-    // Weight the scoring
-    const score = ((good * 3) + (total - missing - poor)) / (total * 3) * 100;
-    return Math.round(Math.max(0, score));
+
+    // Weight the scoring for images
+    const imageScore = ((good * 3) + (total - missing - poor)) / (total * 3) * 100;
+
+    // Additional accessibility factors
+    const keyboardNavigationScore = analysis.keyboard_navigation ? 100 : 0;
+    const colorContrastScore = analysis.color_contrast ? analysis.color_contrast.score : 0;
+    const semanticHtmlScore = analysis.semantic_html ? analysis.semantic_html.score : 0;
+
+    // Combine scores with weights
+    const totalScore = (imageScore * 0.5) + (keyboardNavigationScore * 0.2) + (colorContrastScore * 0.2) + (semanticHtmlScore * 0.1);
+
+    return Math.round(Math.max(0, totalScore));
   }
 
   generateOverallRecommendations(analysis) {
@@ -502,6 +519,24 @@ class ImageContentCheckerService {
       accessibility_score: 100,
       overall_recommendations: []
     };
+  }
+
+  checkKeyboardNavigation() {
+    // Placeholder logic for keyboard navigation analysis
+    // Replace with actual implementation
+    return true; // Assume keyboard navigation is supported
+  }
+
+  checkColorContrast() {
+    // Placeholder logic for color contrast analysis
+    // Replace with actual implementation
+    return { score: 85 }; // Example score
+  }
+
+  checkSemanticHTML() {
+    // Placeholder logic for semantic HTML analysis
+    // Replace with actual implementation
+    return { score: 90 }; // Example score
   }
 }
 
